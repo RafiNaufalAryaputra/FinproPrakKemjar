@@ -10,7 +10,7 @@ app.use(bodyParser.json());
 
 const mongoUri = process.env.MONGO_URI || 'mongodb+srv://FinproKemjar20:MbuyMpruy@finproprakkemjar.xzuzsrl.mongodb.net/?appName=FinproPrakKemjar';
 const client = new MongoClient(mongoUri);
-let usersColl, todosColl;
+let usersColl, todosColl, countersColl;
 
 (async () => {
     try {
@@ -18,6 +18,7 @@ let usersColl, todosColl;
         const db = client.db('FinproKemjar');
         usersColl = db.collection('users');
         todosColl = db.collection('todos');
+        countersColl = db.collection('counters');
         console.log('Connected to MongoDB');
     } catch (err) {
         console.error('Failed to connect to MongoDB:', err);
@@ -28,11 +29,18 @@ let usersColl, todosColl;
 // Register user
 app.post('/register', (req, res) => {
     const { username, password } = req.body;
-    if (!usersColl) return res.status(503).json({ message: 'Database initializing' });
+    if (!usersColl || !countersColl) return res.status(503).json({ message: 'Database initializing' });
     (async () => {
         try {
-            const result = await usersColl.insertOne({ username, password });
-            res.json({ message: 'User registered successfully', userId: result.insertedId.toString() });
+            const seqDoc = await countersColl.findOneAndUpdate(
+                { _id: 'userid' },
+                { $inc: { seq: 1 } },
+                { upsert: true, returnDocument: 'after' }
+            );
+            const newUserId = seqDoc.value.seq;
+
+            const result = await usersColl.insertOne({ username, password, userId: newUserId });
+            res.json({ message: 'User registered successfully', userId: newUserId });
         } catch (err) {
             console.log(err);
             res.status(500).json({ message: 'Registration failed', error: err.message });
@@ -48,7 +56,8 @@ app.post('/login', (req, res) => {
         try {
             const user = await usersColl.findOne({ username, password });
             if (user) {
-                res.json({ message: 'Login successful', userId: user._id.toString() });
+                // Return the sequential numeric userId if present
+                res.json({ message: 'Login successful', userId: user.userId ?? user._id.toString() });
             } else {
                 res.status(401).json({ message: 'Invalid credentials' });
             }
@@ -65,7 +74,8 @@ app.get('/todos/:userId', (req, res) => {
     if (!todosColl) return res.status(503).json({ message: 'Database initializing' });
     (async () => {
         try {
-            const docs = await todosColl.find({ user_id: userId }).toArray();
+            const uid = parseInt(userId, 10);
+            const docs = await todosColl.find({ user_id: uid }).toArray();
             const rows = docs.map(d => ({ id: d._id.toString(), content: d.content }));
             res.json(rows);
         } catch (err) {
@@ -81,7 +91,8 @@ app.post('/todos', (req, res) => {
     if (!todosColl) return res.status(503).json({ message: 'Database initializing' });
     (async () => {
         try {
-            const result = await todosColl.insertOne({ user_id: userId, content });
+            const uid = parseInt(userId, 10);
+            const result = await todosColl.insertOne({ user_id: uid, content });
             res.json({ message: 'Todo added', entryId: result.insertedId.toString() });
         } catch (err) {
             console.log(err);
@@ -111,7 +122,8 @@ app.post('/change-password', (req, res) => {
     if (!usersColl) return res.status(503).json({ message: 'Database initializing' });
     (async () => {
         try {
-            const resu = await usersColl.updateOne({ _id: new ObjectId(userId) }, { $set: { password: newPassword } });
+            const uid = parseInt(userId, 10);
+            const resu = await usersColl.updateOne({ userId: uid }, { $set: { password: newPassword } });
             if (resu.modifiedCount && resu.modifiedCount > 0) {
                 res.json({ message: 'Password changed successfully' });
             } else {
